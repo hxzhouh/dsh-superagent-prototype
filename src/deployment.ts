@@ -58,13 +58,14 @@ export const GitlabAccountsSchema = z.object({
     .default(''),
   project: z.string().trim().regex(/^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*)?$/, 'namespace/project').default(''),
   cli: z.string().trim().default(''),
+  useSsh: z.boolean().default(false),
 })
 /** Source configuration keys that affect deployment setup and trigger a restart when changed. */
 export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape),
   gitlab: Object.keys(GitlabAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
 
 export interface GithubAccount { cli: string; login: string; noreply: string }
-export interface GitlabAccount { cli: string; host: string; project: string; projectId?: number; login: string; noreply: string }
+export interface GitlabAccount { cli: string; host: string; project: string; projectId?: number; login: string; noreply: string; useSsh?: boolean }
 export interface Deployment extends Machine {
   /** The active forge project: the GitHub owner/name when GitHub is configured, else the GitLab project path. */
   repository: string
@@ -169,7 +170,7 @@ export async function resolveGitlabDeployment(machine: Machine, gitlab: unknown,
   const access = project.permissions?.project_access?.access_level ?? project.permissions?.group_access?.access_level
   // A token may omit permissions; only refuse a level that is reported and below Developer.
   if (access !== undefined && access < GITLAB_PUSH_LEVEL) throw new SetupError('gitlabProjectReadOnly', { account: agent.username, project: project.path_with_namespace })
-  return { cli, host: accounts.host, project: project.path_with_namespace, ...project.id ? { projectId: project.id } : {}, login: agent.username,
+  return { cli, host: accounts.host, project: project.path_with_namespace, ...project.id ? { projectId: project.id } : {}, login: agent.username, useSsh: accounts.useSsh,
     noreply: `${agent.username}@users.noreply.${accounts.host.replace(/:\d+$/, '')}`, repository: project.path_with_namespace }
 }
 

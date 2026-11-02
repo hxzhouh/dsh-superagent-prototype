@@ -69,6 +69,7 @@ After `pnpm build` and a restart, **Settings → Sources** shows the GitLab card
 | `host` | Instance hostname, optionally with a port. No scheme, no path |
 | `project` | Project path `namespace/project` |
 | `cli` | Command name or absolute path of the `glab` wrapper |
+| `useSsh` | Use the operating-system user's SSH key for Git operations; off by default. Confirm the SSH identity is the agent account |
 | `observeIssues` | Receive new Issues that do not mention the agent; the admission table then decides candidacy |
 | `observeMergeRequests` | Receive new merge requests that do not mention the agent |
 | `observeComments` | Receive notes and discussions that do not mention the agent |
@@ -157,7 +158,9 @@ The Source declares these variables:
 | `DSH_SUPERAGENT_GITLAB_MR_IID` | Origin or reported merge request IID, or empty |
 | `DSH_SUPERAGENT_GITLAB_MR_HEAD` | `refs/merge-requests/<iid>/head`, or empty |
 
-Workers use `glab`, not a personal token or `curl`. The worker preset shims `glab` to the configured wrapper, blocks the other forge's CLI with a failing shim, and rewrites SSH URLs for the configured host to HTTPS. The git configuration has no commit identity: the worker sets the author from the Delivery requirements prompt section or from the agent account and its commit email.
+Workers use `glab`, not a personal token or `curl`. The worker preset shims `glab` to the configured wrapper; by default GitLab SSH URLs are rewritten to HTTPS. The git configuration has no commit identity: the worker sets the author from the Delivery requirements prompt section or from the agent account and its commit email.
+
+When `useSsh` is enabled, GitLab HTTPS URLs are instead rewritten to SSH for fetch and push. The worker uses the operating-system user's SSH keys and configuration, not the `glab` credential helper; verify the SSH identity belongs to the intended GitLab agent. The GitLab API still uses the `glab` wrapper.
 
 ## Troubleshooting
 

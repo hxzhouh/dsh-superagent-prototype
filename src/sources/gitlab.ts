@@ -58,6 +58,8 @@ export const gitlabKind: SourceKind<GitlabConfig> = {
     { key: 'cli', type: 'text', label: { zh: '智能体的 GitLab CLI', en: 'Agent GitLab CLI' },
       hint: { zh: '命令名或绝对路径，通常是用 GITLAB_HOST 和独立配置登录智能体账号的 glab 包装脚本。执行器以 glab 调用它。', en: 'A command name or absolute path, usually a glab wrapper signed in as the agent account through GITLAB_HOST and its own config. The Executor calls it as glab.' } },
     { key: 'account', type: 'fact', label: { zh: '当前账号', en: 'Current account' } },
+    { key: 'useSsh', type: 'switch', label: { zh: '使用 SSH 进行 Git 操作', en: 'Use SSH for Git operations' },
+      hint: { zh: '使用运行账号的 SSH 密钥访问 GitLab；请确认密钥对应智能体账号。API 仍使用 glab。', en: 'Use the operator’s SSH key for GitLab; ensure it belongs to the agent account. The API still uses glab.' } },
     { key: 'pollSeconds', type: 'number', advanced: true, min: 30, max: 3600, label: { zh: '轮询间隔 / 秒', en: 'Polling interval / seconds' } },
     { key: 'failuresBeforeError', type: 'number', advanced: true, min: 1, max: 20, label: { zh: '连续失败几次后报告异常', en: 'Failed polls before reporting an error' } },
     { key: 'observeIssues', type: 'switch', label: { zh: '接收项目里的新 Issue', en: 'Receive new Issues in the project' },

@@ -116,8 +116,10 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
     '[credential]', '\thelper =',
     ...github ? ['[credential "https://github.com"]', `\thelper = ${gitQuote(credentialHelper(github.cli))}`,
       '[url "https://github.com/"]', '\tinsteadOf = git@github.com:', '\tinsteadOf = ssh://git@github.com/'] : [],
-    ...gitlab ? [`[credential "https://${gitlab.host}"]`, `\thelper = ${gitQuote(credentialHelper(gitlab.cli))}`,
-      `[url "https://${gitlab.host}/"]`, `\tinsteadOf = git@${gitlab.host}:`, `\tinsteadOf = ssh://git@${gitlab.host}/`] : [],
+    ...gitlab ? gitlab.useSsh
+      ? [`[url "git@${gitlab.host}:"]`, `\tinsteadOf = https://${gitlab.host}/`]
+      : [`[credential "https://${gitlab.host}"]`, `\thelper = ${gitQuote(credentialHelper(gitlab.cli))}`,
+        `[url "https://${gitlab.host}/"]`, `\tinsteadOf = git@${gitlab.host}:`, `\tinsteadOf = ssh://git@${gitlab.host}/`] : [],
     // Include Git LFS filters because the operator's global gitconfig (which usually holds them) is ignored.
     '[filter "lfs"]', '\tclean = git-lfs clean -- %f', '\tsmudge = git-lfs smudge -- %f', '\tprocess = git-lfs filter-process', '\trequired = true',
   ].join('\n') + '\n')
@@ -148,7 +150,7 @@ export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 
   // `-z` separates fields with NUL and never quotes paths.
   const expected: [string, string][] = []
   if (github) expected.push(['https://github.com', github.cli])
-  if (gitlab) expected.push([`https://${gitlab.host}`, gitlab.cli])
+  if (gitlab && !gitlab.useSsh) expected.push([`https://${gitlab.host}`, gitlab.cli])
   for (const [host, cli] of expected) {
     const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', `credential.${host}.helper`], stateDir,
       AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')

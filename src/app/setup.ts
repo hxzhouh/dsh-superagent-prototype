@@ -87,7 +87,7 @@ export class Setup {
     const github = wantsGithub ? await resolveDeployment(machine, githubConfig, probe) : undefined
     const gitlab = wantsGitlab ? await resolveGitlabDeployment(machine, gitlabConfig, probe) : undefined
     const deployment = { ...machine, repository: github?.repository ?? gitlab!.repository, ...github?.github ? { github: github.github } : {},
-      ...gitlab ? { gitlab: { cli: gitlab.cli, host: gitlab.host, project: gitlab.project, ...gitlab.projectId ? { projectId: gitlab.projectId } : {}, login: gitlab.login, noreply: gitlab.noreply } } : {} }
+      ...gitlab ? { gitlab: { cli: gitlab.cli, host: gitlab.host, project: gitlab.project, ...gitlab.projectId ? { projectId: gitlab.projectId } : {}, login: gitlab.login, noreply: gitlab.noreply, useSsh: gitlab.useSsh } } : {} }
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem

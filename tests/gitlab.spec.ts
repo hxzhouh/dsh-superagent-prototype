@@ -375,4 +375,14 @@ describe('GitLab deployment and environment', () => {
     expect(readFileSync(workerGitConfig(join(dir, 'state')), 'utf8')).toContain(`credential "https://${HOST}"`)
     expect(readFileSync(join(workerBin(join(dir, 'state')), 'glab'), 'utf8')).toContain('/opt/agent-glab')
   })
+  it('uses the operator SSH key for GitLab only when explicitly configured', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'gitlab-ssh-'))
+    const deployment = testDeployment({ stateDir: join(dir, 'state'), github: undefined,
+      gitlab: { cli: '/opt/agent-glab', host: HOST, project: PROJECT, login: AGENT, noreply: 'agent@example.com', useSsh: true }, feishu: undefined })
+    await writeEnvironment(deployment, [])
+    const config = readFileSync(workerGitConfig(join(dir, 'state')), 'utf8')
+    expect(config).toContain(`[url "git@${HOST}:"]`)
+    expect(config).toContain(`insteadOf = https://${HOST}/`)
+    expect(config).not.toContain(`credential "https://${HOST}"`)
+  })
 })
