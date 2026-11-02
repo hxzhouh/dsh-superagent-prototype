@@ -84,6 +84,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         human_action: z.string().trim().min(1).max(1000).nullish().describe('One concrete question for a person, also with state=progress; omit to keep the pending one, null to clear it.'),
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe(`The ticket's PR or GitLab MR: its source one, or one by the deployment's forge account from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
+        forge: z.enum(['github', 'gitlab']).optional().describe('For a Feishu ticket when both sources are enabled, specify which forge owns pr_number.'),
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
       }).strict(),
       execute: async (args, signal) => {
@@ -91,11 +92,21 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
         const origin = host.store.triggers.get(current.origin.triggerId)
         const gitlabConfig = host.gitlab.config<GitlabConfig>('gitlab')
-        // A Feishu-origin ticket on a GitLab-only deployment reports its merge request the same way.
-        const useGitlab = origin?.source === 'gitlab' || (origin?.source !== 'github' && !!gitlabConfig && !host.github.deployment.github)
-        const mergeRequest = args.pr_number != null && useGitlab && gitlabConfig
+        const githubEnabled = !!host.github.config('github') && !!host.github.deployment.github
+        const gitlabEnabled = !!gitlabConfig && !!host.gitlab.deployment.gitlab
+        const sourceForge = origin?.source === 'gitlab' || origin?.source === 'github' ? origin.source : undefined
+        const followed = new Set((current.follows ?? []).filter(item => !item.closed && item.own)
+          .map(item => item.thread.startsWith('gitlab:mr:') ? 'gitlab' : item.thread.startsWith('github:') ? 'github' : undefined)
+          .filter((item): item is 'github' | 'gitlab' => !!item))
+        if (args.forge && sourceForge && args.forge !== sourceForge) throw new Error('The forge does not match the source of this ticket')
+        if (args.forge && followed.size === 1 && !followed.has(args.forge)) throw new Error('The forge does not match the ticket’s existing PR or MR')
+        const forge = sourceForge ?? args.forge ?? (followed.size === 1 ? [...followed][0] : undefined)
+          ?? (gitlabEnabled && !githubEnabled ? 'gitlab' : githubEnabled && !gitlabEnabled ? 'github' : undefined)
+        if (args.pr_number != null && !forge) throw new Error('Specify forge as github or gitlab for this ticket before reporting pr_number')
+        const useGitlab = forge === 'gitlab'
+        const mergeRequest = args.pr_number != null && useGitlab && gitlabEnabled && gitlabConfig
           ? await readMergeRequest(host.gitlab.commands, clientOf(gitlabConfig), args.pr_number, signal) : undefined
-        const pull = args.pr_number != null && !useGitlab && host.github.deployment.github
+        const pull = args.pr_number != null && !useGitlab && githubEnabled
           ? await readPull(host.github, args.pr_number, signal) : undefined
         if (args.pr_number != null && !mergeRequest && !pull) throw new Error('Provide pr_number only for a ticket from GitHub or GitLab with that Source configured')
         // Claim the PR or MR, record the report, and queue the relay atomically so a rejected claim or invalid report leaves no partial state.

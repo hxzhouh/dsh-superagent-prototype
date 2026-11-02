@@ -133,6 +133,8 @@ A merge request binds to a Ticket in either of two ways:
 
 Binding follows the merge request's Thread `gitlab:mr:<iid>`; a merge or close reports the close to the Engine and the Ticket ends by the ordinary rules. A merge request cannot belong to two open Tickets. The report tool's `pr_number` field carries the merge request IID for GitLab Tickets.
 
+For a Feishu Ticket, the report tool selects the enabled forge or its already bound PR/MR. If both GitHub and GitLab are enabled and neither is bound, the worker must specify `forge` as `github` or `gitlab` along with `pr_number`; it never guesses from an account that is configured but disabled.
+
 When a Ticket ends merged or closed, `mergeRequestEndNotices` sends one terminal notice to its non-GitLab conversations, such as a Feishu thread. The GitLab merge request itself already shows the outcome, so it receives no duplicate notice.
 
 ## Working directory
