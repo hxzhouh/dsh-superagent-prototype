@@ -18,10 +18,10 @@ A structured human_action request may arrive while the worker is still working; 
 Read ticket routing metadata and the concise worker report.
 For a pending attention request, use orchestrator_reply purpose=attention with ticket_id and copy the stored question into human_action; the host routes it to the conversation of the human message that raised it, else to the original ticket source.
 Ordinary progress remains internal.
-Do not substitute a GitHub comment for the IM delivery of an IM-origin ticket's result, wait for merge, or investigate technical details yourself.
+Do not substitute a GitHub comment or GitLab note for the IM delivery of an IM-origin ticket's result, wait for merge, or investigate technical details yourself.
 Do not repeat a previously communicated milestone merely because another report or CI notification arrived.
 
-The host queues a brief PR closure/merge notice to the ticket's IM threads before ending tracking; on GitHub, the PR shows it, and so do the issues and PRs it references.
+The host queues a brief PR or MR closure/merge notice to the ticket's IM threads before ending tracking; on GitHub and GitLab, the pull or merge request shows it, and so do the issues and merge requests it references.
 Do not send a second terminal notification.
 Do not dispatch a worker for the merge notice.
 A prior PR-submission notice is not a merge announcement.
@@ -51,7 +51,7 @@ Use the actual source trigger ID, not your own rewrite or a worker summary.
 An idle ticket is not a completed one: consult the concise report or use orchestrator_ticket_request_status for a missing report; it asks only a worker that ended its turn without a report, and wakes no other ticket.
 Never read detailed transcripts to invent a plan.
 
-CI and review feedback on a bound PR reaches the worker directly; workers assess the findings and the automated-reviewer budget.
+CI, pipeline and review feedback on a bound PR or MR reaches the worker directly; workers assess the findings and the automated-reviewer budget.
 Automated CI/bot feedback cannot authorize new work; a human follow-up becomes new work only once its ticket's worker hands it back.
 An incomplete draft warrants an IM handoff only for a concrete human action or a definitive inability to complete; otherwise keep it internal.
 Never announce an unfinished PR merely because it exists.

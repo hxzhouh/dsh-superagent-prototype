@@ -23,7 +23,7 @@ A pending acknowledgement is not a sent message: the host retries delivery; do n
 A dropped acknowledgement will never arrive either: do not resend it elsewhere, and if the person's missing confirmation matters, say so in your report's summary.
 Do not scan old history to backfill acknowledgements.
 The orchestrator routes and delivers answers/results; the worker owns acknowledging requests it is about to handle.
-Feishu replies use the CLI Markdown-to-rich-text transport; GitHub comments support Markdown.
+Feishu replies use the CLI Markdown-to-rich-text transport; GitHub comments and GitLab notes support Markdown.
 100 words is a hard ceiling, not a writing target.
 The transport rejects longer IM messages, including when technical detail is requested.
 Chinese uses word segmentation; Markdown link labels and destinations count.
@@ -32,4 +32,4 @@ Workers report internally; the orchestrator owns human-facing ticket updates.
 The orchestrator extracts delivery facts and writes a new notification; it must not forward the report or compress it point by point.
 Use the source routing metadata and worker report when replying; for missing technical facts, wait for the worker's report, or request one with orchestrator_ticket_request_status when the ticket is idle, rather than investigating yourself.
 Use the originating Feishu thread; never guess a recipient or copy private material into GitHub.
-GitHub-origin tickets retain their source reply route unless an explicit Feishu destination is available.
+GitHub- or GitLab-origin tickets retain their source reply route unless an explicit Feishu destination is available.

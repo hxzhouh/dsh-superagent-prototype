@@ -6,4 +6,4 @@ import { GIT_LOCATION } from '../../src/infra/environment.ts'
  * the tests run inside `git rebase --exec` inherit GIT_DIR, and a `git init` there would reinitialize the repository under test.
  */
 export const gitEnv = (extra: Record<string, string> = {}): Record<string, string | undefined> =>
-  ({ ...process.env, ...Object.fromEntries(GIT_LOCATION.map(name => [name, undefined])), ...extra })
+  ({ ...process.env, LANG: 'C', LC_ALL: 'C', ...Object.fromEntries(GIT_LOCATION.map(name => [name, undefined])), ...extra })

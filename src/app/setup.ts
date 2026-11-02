@@ -1,7 +1,7 @@
 /** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
-import { SETUP_FIELDS, resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
+import { SETUP_FIELDS, resolveDeployment, resolveFeishuBot, resolveGitlabDeployment, workerProbe, type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import type { Settings, SettingsBlock } from '../policy.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
@@ -18,7 +18,7 @@ const setupFields = (settings: Settings) =>
 export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
 
 /**
- * Resolves the target repository, GitHub account, and optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
+ * Resolves the target forge repository, its account, and optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
  * `Runtime` runs it at startup to gate orchestration readiness, while `Settings` uses it to validate account changes, update blocked command shims, and schedule restarts.
  */
 export class Setup {
@@ -61,7 +61,8 @@ export class Setup {
   async checkAccounts(block: SettingsBlock, settings: Settings): Promise<void> {
     const { machine } = this.host
     const check = block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
-      : resolveDeployment(machine, settings.sources.github?.config, this.probe())
+      : block === 'source:gitlab' ? resolveGitlabDeployment(machine, settings.sources.gitlab?.config, this.probe())
+        : resolveDeployment(machine, settings.sources.github?.config, this.probe())
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
   }
   async blockCommands(blocked: readonly string[]): Promise<void> {
@@ -76,7 +77,17 @@ export class Setup {
   private async resolve(settings: Settings): Promise<Deployment> {
     const { context, machine, lifetime } = this.host
     const probe = this.probe()
-    const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
+    const githubConfig = settings.sources.github?.config
+    const gitlabConfig = settings.sources.gitlab?.config
+    const named = (config: Record<string, unknown> | undefined, keys: readonly string[]) => !!config && keys.some(key => String(config[key] ?? '').trim())
+    const wantsGithub = named(githubConfig, ['repository', 'cli'])
+    const wantsGitlab = named(gitlabConfig, ['host', 'project', 'cli'])
+    // A deployment needs at least one forge Source. When only one is named, the other stays absent instead of failing setup.
+    if (!wantsGithub && !wantsGitlab) throw new SetupError('repositoryUnset')
+    const github = wantsGithub ? await resolveDeployment(machine, githubConfig, probe) : undefined
+    const gitlab = wantsGitlab ? await resolveGitlabDeployment(machine, gitlabConfig, probe) : undefined
+    const deployment = { ...machine, repository: github?.repository ?? gitlab!.repository, ...github?.github ? { github: github.github } : {},
+      ...gitlab ? { gitlab: { cli: gitlab.cli, host: gitlab.host, project: gitlab.project, ...gitlab.projectId ? { projectId: gitlab.projectId } : {}, login: gitlab.login, noreply: gitlab.noreply } } : {} }
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem

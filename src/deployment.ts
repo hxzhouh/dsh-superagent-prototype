@@ -30,6 +30,7 @@ export interface Machine {
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
+  gitlab: 'on the GitLab Source',
   feishu: 'on the Feishu Source', author: 'prompt text', repositoryPath: 'in the prepare command of the Execution settings',
   worktreeRoot: 'the ticket directory of the Execution settings', blockedCommands: 'in the Execution settings',
 }
@@ -38,8 +39,12 @@ const MOVED: Record<string, string> = {
 export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }
+  const { stateDir } = config
+  // `schemastery` reports `.volatile()` fields as numbers at the type level, while Cordis supplies the stable references
+  // the runtime reads with `.get()`. Keep the references rather than their current values so a live config update applies.
+  const volatile = <T>(value: T): Volatile<T> => value as unknown as Volatile<T>
+  return { stateDir, promptMaxChars: volatile(config.promptMaxChars), admissionContextMaxPages: volatile(config.admissionContextMaxPages),
+    admissionContextTimeoutMs: volatile(config.admissionContextTimeoutMs) }
 }
 
 export const GithubAccountsSchema = z.object({
@@ -47,15 +52,39 @@ export const GithubAccountsSchema = z.object({
   cli: z.string().trim().default(''),
 })
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
+/** A self-hosted GitLab instance, its project, and the agent's `glab` wrapper. */
+export const GitlabAccountsSchema = z.object({
+  host: z.string().trim().regex(/^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?::[0-9]{1,5})?)?$/, 'host or host:port')
+    .default(''),
+  project: z.string().trim().regex(/^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*)?$/, 'namespace/project').default(''),
+  cli: z.string().trim().default(''),
+})
 /** Source configuration keys that affect deployment setup and trigger a restart when changed. */
-export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
+export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape),
+  gitlab: Object.keys(GitlabAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
 
+export interface GithubAccount { cli: string; login: string; noreply: string }
+export interface GitlabAccount { cli: string; host: string; project: string; projectId?: number; login: string; noreply: string }
 export interface Deployment extends Machine {
+  /** The active forge project: the GitHub owner/name when GitHub is configured, else the GitLab project path. */
   repository: string
-  github: { cli: string; login: string; noreply: string }
+  /** Present when the GitHub Source resolves an account. */
+  github?: GithubAccount
+  /** Present when the GitLab Source resolves a self-hosted instance and project. */
+  gitlab?: GitlabAccount
   feishu?: FeishuBot
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
+/** The GitHub account, or a clear error when this deployment has no GitHub Source. */
+export function githubOf(deployment: Deployment): GithubAccount {
+  if (!deployment.github) throw new Error('This deployment has no GitHub account; configure the GitHub Source or use the GitLab Source')
+  return deployment.github
+}
+/** The GitLab account, or a clear error when this deployment has no GitLab Source. */
+export function gitlabOf(deployment: Deployment): GitlabAccount {
+  if (!deployment.gitlab) throw new Error('This deployment has no GitLab account; configure the GitLab Source')
+  return deployment.gitlab
+}
 
 /** Resolve a command name or absolute path to an executable file, ignoring the worker shim directory. */
 export function executable(name: string, path: string, exclude?: string): string {
@@ -103,6 +132,45 @@ export async function resolveDeployment(machine: Machine, github: unknown, probe
   const repository = access.name
   if (access.push !== true) throw new SetupError('repositoryReadOnly', { account: agent.login, repository })
   return { ...machine, repository, github: { cli, login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com` } }
+}
+
+
+const GitlabUser = z.object({ username: z.string().regex(/^[A-Za-z0-9_.-]+$/), id: z.number().int().positive(), name: z.string().optional() })
+const GitlabProject = z.looseObject({
+  id: z.number().int().positive().optional(),
+  path_with_namespace: z.string().regex(/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/),
+  permissions: z.looseObject({
+    project_access: z.looseObject({ access_level: z.number().int() }).nullish(),
+    group_access: z.looseObject({ access_level: z.number().int() }).nullish(),
+  }).nullish(),
+})
+/** GitLab access levels that may push: Developer (30), Maintainer (40) and Owner (50). */
+const GITLAB_PUSH_LEVEL = 30
+/** Encode a project path for GitLab's REST API, where `group/project` is one path segment. */
+export const gitlabProjectId = (project: string): string => project.includes('/') ? encodeURIComponent(project) : project
+/**
+ * Verify the agent's GitLab CLI identity and push access to a self-hosted project.
+ * The CLI is a `glab` wrapper signed in only as the agent account; `host` selects the instance and `project` is its path.
+ */
+export async function resolveGitlabDeployment(machine: Machine, gitlab: unknown, probe: Probe, path = process.env.PATH ?? ''): Promise<GitlabAccount & { repository: string }> {
+  const accounts = GitlabAccountsSchema.parse(gitlab ?? {})
+  if (!accounts.host) throw new SetupError('gitlabHostUnset')
+  if (!accounts.project) throw new SetupError('gitlabProjectUnset')
+  if (!accounts.cli) throw new SetupError('gitlabCliUnset')
+  let cli: string
+  try { cli = executable(accounts.cli, path, workerBin(machine.stateDir)) } catch (error) { throw new SetupError('gitlabCliMissing', { output: reason(error) }) }
+  const run = (...args: string[]): Promise<string> => probe([cli, 'api', '--hostname', accounts.host, ...args])
+    .catch((error: unknown) => { throw new SetupError('gitlabCliSignedOut', { host: accounts.host, output: reason(error) }) })
+  const agent = parsed(GitlabUser, await run('user'))
+  if (!agent) throw new SetupError('gitlabCliNoAccount')
+  const project = parsed(GitlabProject, await probe([cli, 'api', '--hostname', accounts.host, `projects/${gitlabProjectId(accounts.project)}`])
+    .catch((error: unknown) => { throw new SetupError('gitlabProjectUnreadable', { account: agent.username, project: accounts.project, output: reason(error) }) }))
+  if (!project) throw new SetupError('gitlabProjectUnreported', { project: accounts.project })
+  const access = project.permissions?.project_access?.access_level ?? project.permissions?.group_access?.access_level
+  // A token may omit permissions; only refuse a level that is reported and below Developer.
+  if (access !== undefined && access < GITLAB_PUSH_LEVEL) throw new SetupError('gitlabProjectReadOnly', { account: agent.username, project: project.path_with_namespace })
+  return { cli, host: accounts.host, project: project.path_with_namespace, ...project.id ? { projectId: project.id } : {}, login: agent.username,
+    noreply: `${agent.username}@users.noreply.${accounts.host.replace(/:\d+$/, '')}`, repository: project.path_with_namespace }
 }
 
 const AuthStatus = z.object({ appId: z.string().regex(/^cli_[A-Za-z0-9]+$/), brand: z.enum(['feishu', 'lark']).default('feishu'), identities: z.object({ bot: z.object({ status: z.string() }) }) })

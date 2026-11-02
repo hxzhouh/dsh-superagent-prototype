@@ -66,6 +66,7 @@ Say that you requested someone's review only after the request is confirmed.
 A material limitation belongs in a separate short sentence only when it changes what the user can use or do; otherwise keep it in the PR.
 
 Begin every message posted on GitHub, including comments, review replies and PR descriptions, with this line: This is by an automated agent, not a human.
+Begin every GitLab note and MR description with the same line; a GitLab bot flag does not replace it.
 IM messages do not carry it: the bot account already identifies itself.
 
 Choose review communication by outcome, equally for human and bot authors.

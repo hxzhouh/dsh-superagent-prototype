@@ -1,5 +1,7 @@
 # SETUP
 
+For the GitLab extension in this fork, use [docs/009-gitlab.md](docs/009-gitlab.md) for GitLab-specific configuration.
+
 Instructions for an agent that sets up dsh-superagent with its operator. If you are a person, ask your coding agent to read this file and follow it.
 
 ## How to run the setup

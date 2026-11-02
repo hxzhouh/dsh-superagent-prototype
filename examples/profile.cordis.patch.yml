@@ -7,6 +7,9 @@
 - id: dsh-superagent
   config:
     stateDir: <absolute path, for example /home/me/.dsh/state/superagent>
+# GitLab is optional: uncomment to enable its Source, then set the instance host, project and glab on the GitLab Source.
+# - id: dsh-superagent-gitlab
+#   disabled: false
 # Feishu is optional: uncomment to enable its Source, then set the bot's lark-cli on the Feishu Source.
 # - id: dsh-superagent-feishu
 #   disabled: false

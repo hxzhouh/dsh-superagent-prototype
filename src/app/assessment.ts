@@ -9,6 +9,7 @@ import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
+import { readGitlabPath } from '../sources/gitlab-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
 import { textPage } from './context.ts'
@@ -263,7 +264,13 @@ export class MasterAssessor implements Assessor {
         body = JSON.stringify({ images: references, next_read: next, ...result.body })
       }
       else {
-        body = await readRepositoryPath(commands, read.path!, read.resource === 'directory' ? 'directory' : 'file')
+        const gitlab = this.host.deployment.gitlab
+        // A Feishu candidate on a GitLab-only deployment reads the only configured repository.
+        const useGitlab = trigger.source === 'gitlab' || (!!gitlab && !this.host.deployment.github)
+        body = useGitlab
+          ? gitlab ? await readGitlabPath(commands, gitlab, read.path!, read.resource === 'directory' ? 'directory' : 'file')
+            : (() => { throw new Error('The GitLab Source is not configured; repository files are unavailable') })()
+          : await readRepositoryPath(commands, read.path!, read.resource === 'directory' ? 'directory' : 'file')
       }
       snapshots.set(cacheKey, body)
       return textPage(read.resource, body, read.offset, 4000)
