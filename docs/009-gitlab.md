@@ -73,6 +73,7 @@ After `pnpm build` and a restart, **Settings → Sources** shows the GitLab card
 | `observeMergeRequests` | Receive new merge requests that do not mention the agent |
 | `observeComments` | Receive notes and discussions that do not mention the agent |
 | `observePipelines` | Receive default-branch pipeline status changes |
+| `allowSelfRequests` | Allow the agent account's explicit self-mentions to become requests; off by default |
 | `pollSeconds` | Poll interval, 30 to 3600 seconds; default 60 |
 | `failuresBeforeError` | Consecutive failed polls before the Source health turns `error`; default 3 |
 
@@ -92,6 +93,8 @@ The admission rows are:
 | `pipelines` | Default-branch pipelines, observed only when `observePipelines` is on |
 
 An allowed sender's mention is explicit in every mode. A follow-up on a Thread with a Ticket follows the usual rules in [002 Authorization](002-authorization.md): an allowed sender is explicit, anyone else is inferred, and inferred work needs `auto` mode and a matched rule. Pipeline triggers have no sender and use the last admission cell.
+
+For a shared human/agent account, enable `allowSelfRequests`, add that username to the GitLab allowed list, and explicitly mention it in each request or follow-up. The first poll after enabling establishes the starting point: send requests only after that poll, and do not rely on older comments or edits to them. Host-generated replies carry a `dsh-superagent` marker and are ignored, as are unaddressed messages by that account. The account alone cannot distinguish a person from the worker: direct `glab` posts without the host marker that mention the shared account may be mistaken for a request. Workers must not mention their own account in posts. Use a separate agent account when this risk is unacceptable.
 
 The Source listens only to the configured host and project. A Ticket whose Mandate records a different project or host stops listening, so its Mandate fails revalidation before it resumes. This prevents a later project change from silently redirecting an old Ticket.
 
@@ -114,7 +117,7 @@ Trigger IDs are stable:
 
 `Engine.receive` records duplicates and creates no second Ticket. A poll interrupted before its cursor advances re-reads the same items safely. Cursors are kept in `KV.gitlab.stream`; the Source does not advance a cursor until the items it covers were handed to `receive`.
 
-The agent's own notes, system notes and pipeline events are filtered before intake. A bot is marked `human: false` from GitLab's `bot` flag or a username ending in `-bot`/`_bot`.
+The agent's own notes are filtered before intake unless `allowSelfRequests` accepts an explicit self-mention; system notes are filtered. A bot is marked `human: false` from GitLab's `bot` flag or a username ending in `-bot`/`_bot`.
 
 ## Replying and merge request tracking
 

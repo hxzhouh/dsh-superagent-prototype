@@ -54,7 +54,8 @@ export const KV = {
    */
   gitlab: { stream: family<{ since: string; started: string; observed?: boolean }, [stream: 'issues' | 'merge_requests']>('gitlab-stream:'),
     ci: family<{ pipeline: number; status: string }, [iid: number]>('gitlab-ci:'),
-    branchPipeline: record<{ pipeline: number; status: string }>('gitlab-branch-pipeline') },
+    branchPipeline: record<{ pipeline: number; status: string }>('gitlab-branch-pipeline'),
+    selfRequests: record<{ since: string; host: string; project: string }>('gitlab-self-requests') },
   /**
    * Feishu Source: known chats (`true` for direct messages); per-chat history cursor and active topics mapped from topic ID
    * to last-seen timestamp; and per-polled-thread seen message IDs and initialization flag.

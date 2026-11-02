@@ -28,6 +28,7 @@ const GitlabConfigSchema = GitlabAccountsSchema.extend({
   failuresBeforeError: z.number().int().min(1).max(20).default(3),
   observeIssues: z.boolean().default(false), observeMergeRequests: z.boolean().default(false), observeComments: z.boolean().default(false),
   observePipelines: z.boolean().default(false),
+  allowSelfRequests: z.boolean().default(false),
 }).strict()
 export type GitlabConfig = z.infer<typeof GitlabConfigSchema>
 const OBSERVED = { issues: 'observeIssues', merge_requests: 'observeMergeRequests', comments: 'observeComments', pipelines: 'observePipelines' } as const
@@ -65,6 +66,8 @@ export const gitlabKind: SourceKind<GitlabConfig> = {
       hint: { zh: '打开后，没有 @ 智能体的新合并请求也接收，由策略的接收表决定是否成为候选。', en: 'New merge requests that do not mention the agent are received too, and the admission table decides whether they become candidates.' } },
     { key: 'observeComments', type: 'switch', label: { zh: '接收项目里的评论', en: 'Receive comments in the project' },
       hint: { zh: '打开后，Issue 和合并请求上没有 @ 智能体的评论也接收；未打开时仍接收 @ 了智能体的评论。', en: 'Comments without a mention are received too; comments that mention the agent are received either way.' } },
+    { key: 'allowSelfRequests', type: 'switch', label: { zh: '允许智能体账号发起任务', en: 'Allow requests from the agent account' },
+      hint: { zh: '仅接收该账号明确 @ 自己且不含智能体回复标记的消息；账号必须在允许名单中。共用账号无法可靠区分人和智能体的操作。', en: 'Receive only messages that explicitly mention this account and have no agent reply marker; the account must be on the allowed list. A shared account cannot reliably distinguish human and agent actions.' } },
     { key: 'observePipelines', type: 'switch', label: { zh: '接收默认分支的流水线', en: 'Receive the default branch\'s pipelines' },
       hint: { zh: '默认分支的流水线状态变化会接收，由策略的接收表决定是否成为候选。合并请求的流水线变化在订阅后总会跟踪。', en: 'Default-branch pipeline changes are received and the admission table decides whether they become candidates. A subscribed merge request always tracks its own pipeline.' } },
   ],
@@ -202,9 +205,10 @@ async function pollStream(ctx: SourceContext, round: Round, id: 'issues' | 'merg
     // Allow a few seconds of clock skew between this host and the GitLab instance.
     const created = Date.parse(item.created_at) >= Date.parse(started) - 5000
     const observed = id === 'issues' ? config.observeIssues : config.observeMergeRequests
-    // The agent's own description is not an event, but its notes and merge request state still are.
-    if (!sameName(item.author.username, login) && created && (observed || mentions(text, login))) {
-      const trigger = id === 'issues' ? issueTrigger(refOf(config), item, login) : mergeRequestTrigger(refOf(config), item as GitlabMergeRequest, login)
+    const self = item.author.bot !== true && selfRequest(ctx, config, item.author.username, login, text, item.created_at)
+    if ((!sameName(item.author.username, login) || self) && created && (observed || mentions(text, login))) {
+      const built = id === 'issues' ? issueTrigger(refOf(config), item, login) : mergeRequestTrigger(refOf(config), item as GitlabMergeRequest, login)
+      const trigger = self ? { ...built, human: true } : built
       await ctx.receive(trigger)
       nameThread(ctx, trigger, item.title, id === 'merge_requests')
     }
@@ -229,6 +233,13 @@ async function pollStream(ctx: SourceContext, round: Round, id: 'issues' | 'merg
   ctx.state.set(KV.gitlab.stream(id), { since: next, started, observed: observedNow })
 }
 const refOf = (config: Pick<GitlabConfig, 'host' | 'project'>): GitlabRef => ({ host: config.host, project: config.project })
+/** Shared accounts can start work only through an explicit mention; never re-ingest a host-generated reply. */
+function selfRequest(ctx: SourceContext, config: GitlabConfig, username: string, login: string, text: string, createdAt: string): boolean {
+  const window = ctx.state.get(KV.gitlab.selfRequests)
+  return config.allowSelfRequests && !!window && window.host === config.host && sameProject(window.project, config.project)
+    && Date.parse(createdAt) >= Date.parse(window.since) && !!login && sameName(username, login) && mentions(text, login)
+    && !/<!--\s*dsh-superagent:/i.test(text)
+}
 function nameThread(ctx: SourceContext, trigger: Trigger, title: string, mr: boolean): void {
   const kind = mr ? 'merge_request' : 'issue'
   ctx.threads.patch(gitlabThread(kind, Number(trigger.meta.iid)), { iid: Number(trigger.meta.iid), isPr: mr, title,
@@ -243,7 +254,10 @@ async function ingestNotes(ctx: SourceContext, round: Round, client: GitlabClien
   const subscribed = !!ctx.threads.get(gitlabThread(kind, noteable.iid))?.subscriptions.length
   const { login } = ctx.deployment.gitlab ?? { login: '' }
   const commands = ctx.commands.withSignal(round.signal)
-  const accept = (note: GitlabNote): boolean => !note.system && !sameName(note.author.username, login)
+  const isSelfRequest = (note: GitlabNote): boolean => note.author.bot !== true
+    && selfRequest(ctx, config, note.author.username, login, note.body ?? '', note.created_at)
+  const accept = (note: GitlabNote): boolean => !note.system
+    && (!sameName(note.author.username, login) || isSelfRequest(note))
     && (observeAll || subscribed || mentions(note.body ?? '', login))
   if (kind === 'issue') {
     const notes = await gitlabPages(commands, client, GitlabNoteSchema,
@@ -251,7 +265,8 @@ async function ingestNotes(ctx: SourceContext, round: Round, client: GitlabClien
     for (const note of notes) {
       if (stopped(ctx, round)) throw new Error('The GitLab Source stopped during the poll')
       if (!accept(note)) continue
-      const trigger = noteTrigger(refOf(config), { kind, iid: noteable.iid, ...noteable.web_url ? { web_url: noteable.web_url } : {} }, note, login)
+      const built = noteTrigger(refOf(config), { kind, iid: noteable.iid, ...noteable.web_url ? { web_url: noteable.web_url } : {} }, note, login)
+      const trigger = isSelfRequest(note) ? { ...built, human: true } : built
       await ctx.receive(trigger)
       nameThread(ctx, trigger, noteable.title ?? '', false)
     }
@@ -263,8 +278,9 @@ async function ingestNotes(ctx: SourceContext, round: Round, client: GitlabClien
     for (const note of discussion.notes) {
       if (stopped(ctx, round)) throw new Error('The GitLab Source stopped during the poll')
       if (!accept(note)) continue
-      const trigger = noteTrigger(refOf(config), { kind, iid: noteable.iid, ...noteable.web_url ? { web_url: noteable.web_url } : {} }, note, login,
+      const built = noteTrigger(refOf(config), { kind, iid: noteable.iid, ...noteable.web_url ? { web_url: noteable.web_url } : {} }, note, login,
         discussion.individual_note ? undefined : discussion.id)
+      const trigger = isSelfRequest(note) ? { ...built, human: true } : built
       await ctx.receive(trigger)
       nameThread(ctx, trigger, noteable.title ?? '', true)
     }
@@ -348,6 +364,10 @@ export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promi
   const config = ctx.config<GitlabConfig>(SOURCE)
   if (!config || !configured(config)) { ctx.report('gitlab', health('paused', 'sourceOff')); return }
   const round = newRound(signal)
+  const window = ctx.state.get(KV.gitlab.selfRequests)
+  if (!config.allowSelfRequests) ctx.state.set(KV.gitlab.selfRequests, undefined)
+  else if (!window || window.host !== config.host || !sameProject(window.project, config.project))
+    ctx.state.set(KV.gitlab.selfRequests, { since: round.started, host: config.host, project: config.project })
   await pollStream(ctx, round, 'issues')
   await pollStream(ctx, round, 'merge_requests')
   await pollThreads(ctx, signal, round)

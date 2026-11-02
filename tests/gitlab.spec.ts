@@ -156,6 +156,56 @@ describe('GitLab Source scope and policy', () => {
 })
 
 describe('GitLab polling', () => {
+  it('admits only explicit unmarked requests from the shared account when enabled', async () => {
+    const run = async (enabled: boolean) => {
+      const h = host({}, { allowSelfRequests: enabled, observeIssues: true, observeComments: true })
+      const self = { id: 2, username: AGENT, bot: false }
+      h.ctx.state.set(KV.gitlab.selfRequests, { since: '2026-01-01T00:00:00.000Z', host: HOST, project: PROJECT })
+      gitlab(h, {
+        issues: [issue({ author: self, description: '@agent-bot fix this' })],
+        'issues/7/notes': [
+          note({ id: 101, author: self, body: '@agent-bot please follow up' }),
+          note({ id: 102, author: self, body: '@agent-bot done\n\n<!-- dsh-superagent:reply-1 -->' }),
+          note({ id: 103, author: self, body: 'ordinary message' }),
+          note({ id: 104, author: self, system: true, body: '@agent-bot system' }),
+          note({ id: 105, author: self, body: '@agent-bot old request', created_at: '2025-01-01T00:00:00.000Z' }),
+        ],
+        merge_requests: [mr({ author: self, description: '@agent-bot review this' })],
+        'merge_requests/12/discussions': [discussion([note({ id: 201, author: self, body: '@agent-bot inspect this' })])],
+        'merge_requests/12/pipelines': [],
+      })
+      await pollRound(h.ctx, new AbortController().signal)
+      await pollRound(h.ctx, new AbortController().signal)
+      const saved = h.store.read.recentTriggers(0, 20)
+      h.store.close()
+      return saved
+    }
+    expect(await run(false)).toHaveLength(0)
+    const saved = await run(true)
+    expect(saved).toHaveLength(4)
+    expect(saved.every(trigger => trigger.human && trigger.addressed === 'mention')).toBe(true)
+    expect(saved.some(trigger => [102, 103, 105].includes(Number(trigger.meta.noteId)))).toBe(false)
+  })
+  it('still requires an allowed-list entry for a shared-account request', () => {
+    const h = host({}, { allowSelfRequests: true })
+    const trigger = { ...issueTrigger(REF, issue({ author: { id: 2, username: AGENT }, description: '@agent-bot fix this' }) as never, AGENT), human: true }
+    const thread = { key: 'gitlab:issue:7', ref: { source: 'gitlab', id: 'issue:7' }, createdAt: '', subscriptions: [], correlated: [], pending: [], meta: {} }
+    expect(settingsPolicy(h.store.settings(), h.sources).gate(trigger, thread, [])).toMatchObject({ admissible: false })
+    const settings = h.store.settings()
+    settings.policy.sources.gitlab = { allowed: [{ id: AGENT }], admission: {} }
+    h.store.saveSettings(settings)
+    expect(settingsPolicy(h.store.settings(), h.sources).gate(trigger, thread, [])).toMatchObject({ admissible: true, strength: 'explicit' })
+    h.store.close()
+  })
+  it('does not turn historical self-mentions into new work when enabled', async () => {
+    const h = host({}, { allowSelfRequests: true })
+    const self = { id: 2, username: AGENT }
+    gitlab(h, { issues: [issue()], 'issues/7/notes': [note({ author: self, body: '@agent-bot old request', created_at: '2025-01-01T00:00:00Z' })], merge_requests: [] })
+    await pollRound(h.ctx, new AbortController().signal)
+    expect(h.store.read.recentTriggers(0, 20)).toHaveLength(0)
+    expect(h.ctx.state.get(KV.gitlab.selfRequests)?.since).toBeTruthy()
+    h.store.close()
+  })
   it('stores a mentioning note once, skips the agent and system notes, and leaves an unobserved description out', async () => {
     const h = host()
     gitlab(h, {
